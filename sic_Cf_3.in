@@ -1,0 +1,316 @@
+# ============================================================
+# SiC_Cf_3_template_based.in
+# SiC/3-layer graphite/SiC layered structure + rigid diamond spherical indenter
+# Based on the uploaded log(2).lammps, whose early relaxation stage was reported as acceptable.
+#
+# Main changes relative to the uploaded log:
+#   1) Keep the early-stage model construction, boundary/fixed regions, tip-before-relax workflow.
+#   2) Keep the early-stage workflow of SiC_Cf_1(7).in and set middle graphite layers = 3.
+#   3) Remove restart.indent and restart2.indent outputs.
+#   4) Correct force conversion: 1 eV/A = 1.602176634 nN.
+#
+# Atom types:
+#   type 1 = C in SiC
+#   type 2 = Si
+#   type 3 = graphitic/C layer
+#   type 4 = rigid diamond indenter C
+#
+# Required potential file:
+#   SiC.tersoff
+# ============================================================
+
+# ========================== 1. Initialization ==========================
+units           metal
+boundary        f f f
+dimension       3
+atom_style      atomic
+
+neighbor        5.0 bin
+neigh_modify    every 1 delay 0 check yes one 10000
+comm_modify     cutoff 12.0
+timestep        0.001
+log             log_SiC_Cf_3.lammps
+
+region          box block -10 180 -10 180 -50 120 units box
+create_box      4 box
+
+# ========================== 2. Lower SiC substrate ==========================
+# 3C-SiC lattice, a = 4.259 A.
+# Four C basis atoms + four Si basis atoms, keeping Si:C = 1:1.
+lattice custom 4.259 &
+        a1 1.0 0.0 0.0 &
+        a2 0.0 1.0 0.0 &
+        a3 0.0 0.0 1.0 &
+        basis 0.0  0.0  0.0  &
+        basis 0.5  0.5  0.0  &
+        basis 0.5  0.0  0.5  &
+        basis 0.0  0.5  0.5  &
+        basis 0.25 0.25 0.25 &
+        basis 0.75 0.75 0.25 &
+        basis 0.75 0.25 0.75 &
+        basis 0.25 0.75 0.75
+
+region          SIC1 block 0 170 0 170 -20 6 units box
+create_atoms    2 region SIC1 &
+        basis 1 1 &
+        basis 2 1 &
+        basis 3 1 &
+        basis 4 1 &
+        basis 5 2 &
+        basis 6 2 &
+        basis 7 2 &
+        basis 8 2
+
+mass            1 12.01
+mass            2 28.09
+mass            3 12.01
+mass            4 12.01
+
+group           SIC1 region SIC1
+
+# Remove several top C atoms from the lower SiC surface to avoid possible overlap
+# with the inserted C layer.
+variable        z_max_lower equal bound(all,zmax)
+variable        z_cut_lower equal ${z_max_lower}-1.5
+region          top_surface_lower block 0 170 0 170 ${z_cut_lower} ${z_max_lower} units box
+group           reg_top_lower region top_surface_lower
+group           type1_group type 1
+group           del_lower_C intersect reg_top_lower type1_group
+delete_atoms    group del_lower_C
+
+# ========================== 3. Middle graphitic/C layers ==========================
+variable        z_surface equal bound(all,zmax)
+variable        z_graph equal ${z_surface}+3.1
+variable        lz_graph equal 2.4768*1.3727
+variable        z_orig equal ${z_graph}/${lz_graph}-floor(${z_graph}/${lz_graph})
+
+lattice custom 2.4768 &
+        a1 1.0 0.0   0.0 &
+        a2 0.0 1.732 0.0 &
+        a3 0.0 0.0   1.3727 &
+        basis 0.0 0.33333 0.0 &
+        basis 0.0 0.66667 0.0 &
+        basis 0.5 0.16667 0.0 &
+        basis 0.5 0.83333 0.0 &
+        origin 0.0 0.0 ${z_orig}
+
+# Middle graphitic/C layer number = 3.
+# The interlayer spacing along z is lz_graph = 2.4768*1.3727 ≈ 3.40 A.
+# The first C layer is located near z_graph, and the last C layer is located near z_graph_top.
+variable        graph_layers equal 3
+variable        z_graph_top equal ${z_graph}+(${graph_layers}-1)*${lz_graph}
+variable        graph_half equal 0.5
+variable        z_graph_high equal ${z_graph_top}+${graph_half}
+variable        z_graph_low  equal ${z_graph}-${graph_half}
+region          graph_reg block 0 170 0 170 ${z_graph_low} ${z_graph_high} units box
+create_atoms    3 region graph_reg
+group           graph_layer region graph_reg
+
+# ========================== 4. Upper SiC layer ==========================
+variable        z_top_SiC_start equal ${z_graph_top}+3.1
+variable        z_top_SiC_end equal ${z_top_SiC_start}+26.0
+
+lattice custom 4.259 &
+        a1 1.0 0.0 0.0 &
+        a2 0.0 1.0 0.0 &
+        a3 0.0 0.0 1.0 &
+        basis 0.0  0.0  0.0  &
+        basis 0.5  0.5  0.0  &
+        basis 0.5  0.0  0.5  &
+        basis 0.0  0.5  0.5  &
+        basis 0.25 0.25 0.25 &
+        basis 0.75 0.75 0.25 &
+        basis 0.75 0.25 0.75 &
+        basis 0.25 0.75 0.75
+
+region          top_SiC_reg block 0 170 0 170 ${z_top_SiC_start} ${z_top_SiC_end} units box
+create_atoms    2 region top_SiC_reg &
+        basis 1 1 &
+        basis 2 1 &
+        basis 3 1 &
+        basis 4 1 &
+        basis 5 2 &
+        basis 6 2 &
+        basis 7 2 &
+        basis 8 2
+
+group           top_SiC_group region top_SiC_reg
+
+# ========================== 5. Workpiece and fixed regions ==========================
+group           workpiece type 1 2 3
+variable        z_model_top equal bound(workpiece,zmax)
+
+# Bottom fixed layer and bottom thermostat layer.
+region          bottom_fix_reg  block 0 170 0 170 -20 -15 units box
+region          bottom_temp_reg block 0 170 0 170 -15 -10 units box
+
+group           bottom_fix_raw region bottom_fix_reg
+group           bottom_fix intersect workpiece bottom_fix_raw
+
+# Four-side thin fixed layer.
+# The top surface is NOT fixed, so the central indentation zone can deform freely.
+variable        side_thick equal 8.0
+variable        side_xhi equal 170.0-${side_thick}
+variable        side_yhi equal 170.0-${side_thick}
+
+region          x_left_fix  block 0 ${side_thick} 0 170 -20 ${z_model_top} units box
+region          x_right_fix block ${side_xhi} 170 0 170 -20 ${z_model_top} units box
+region          y_front_fix block 0 170 0 ${side_thick} -20 ${z_model_top} units box
+region          y_back_fix  block 0 170 ${side_yhi} 170 -20 ${z_model_top} units box
+region          side_fix_reg union 4 x_left_fix x_right_fix y_front_fix y_back_fix
+
+group           side_fix_raw region side_fix_reg
+group           side_fix intersect workpiece side_fix_raw
+
+group           fixed_all union bottom_fix side_fix
+
+group           temp_layer_raw region bottom_temp_reg
+group           temp_layer_intersect intersect workpiece temp_layer_raw
+group           temp_layer subtract temp_layer_intersect fixed_all
+
+group           mobile subtract workpiece fixed_all
+
+# ========================== 6. Rigid diamond spherical indenter ==========================
+# The tip is intentionally created before relaxation, following the uploaded log.
+variable        tip_radius equal 20.0
+variable        tip_gap    equal 5.0
+variable        tip_x      equal 85.0
+variable        tip_y      equal 85.0
+variable        tip_z      equal ${z_model_top}+${tip_gap}+${tip_radius}
+
+lattice         diamond 3.56
+region          diamond_tip sphere ${tip_x} ${tip_y} ${tip_z} ${tip_radius} units box
+create_atoms    4 region diamond_tip
+group           diamond type 4
+
+# ========================== 7. Potential functions ==========================
+# Selected from the four uploaded potential files:
+#   1) SiC(1)(1).tersoff : active, for the SiC matrix/type 1-2 interactions
+#   2) CH.airebo-m       : active, for the graphitic/C fiber layer/type 3 C-C interactions
+#   3) SiC(2).vashishta  : selected as an alternative SiC potential for comparison,
+#                          but not invoked simultaneously in this input to avoid
+#                          double counting with Tersoff.
+# Excluded:
+#   CH.airebo            : older AIREBO version; CH.airebo-m is more suitable here.
+#
+# Active interaction assignment in this run:
+#   type 1 = C in SiC, type 2 = Si       -> Tersoff
+#   type 3 = graphitic/C layer           -> AIREBO-M
+#   SiC-Cf interface and rigid tip contact -> LJ/cut
+pair_style      hybrid tersoff airebo/morse 3.0 lj/cut 9.8
+
+# SiC matrix interactions.
+pair_coeff      * * tersoff SiC.tersoff C Si NULL NULL
+
+# Graphitic/C layer interactions.
+pair_coeff      * * airebo/morse CH.airebo-m NULL NULL C NULL
+
+# Interface interactions between the SiC matrix and graphitic/C layer.
+pair_coeff      1 3 lj/cut 0.00891 3.629 9.8
+pair_coeff      2 3 lj/cut 0.01250 3.200 9.8
+
+# Contact interactions between the rigid diamond indenter and the workpiece.
+pair_coeff      1 4 lj/cut 0.00891 3.629 9.8
+pair_coeff      2 4 lj/cut 0.01250 3.200 9.8
+pair_coeff      3 4 lj/cut 0.00891 3.629 9.8
+
+# Diamond atoms are moved as a rigid body by fix move. Internal C-C interaction
+# of the rigid indenter is therefore not needed.
+pair_coeff      4 4 lj/cut 0.00000 3.567 9.8
+
+# ========================== 8. Initial constraints and minimization ==========================
+velocity        fixed_all set 0.0 0.0 0.0
+velocity        diamond   set 0.0 0.0 0.0
+
+fix             freeze_fixed fixed_all setforce 0.0 0.0 0.0
+fix             hold_tip diamond setforce 0.0 0.0 0.0
+
+dump            dump_min all custom 1000 mini_SiC_Cf_3.lmp id type x y z
+thermo          1000
+thermo_style    custom step temp etotal ke pe press pxx pyy pzz
+
+min_style       cg
+minimize        1.0e-8 1.0e-8 5000 5000
+undump          dump_min
+reset_timestep  0
+
+# Save the model after creation and minimization.
+write_data      initial_SiC_Cf_3.data
+
+# ========================== 9. Relaxation ==========================
+compute         mobileTemp mobile temp
+thermo_modify   temp mobileTemp
+thermo          1000
+thermo_style    custom step temp etotal ke pe press pxx pyy pzz
+
+dump            dump_relax all custom 1000 relax_SiC_Cf_3.lmp id type x y z vx vy vz fx fy fz
+
+velocity        mobile create 50.0 778945 dist gaussian
+fix             int_relax mobile nve
+
+fix             bath temp_layer langevin 50.0 50.0 0.1 45678 zero yes
+run             10000
+unfix           bath
+
+fix             bath temp_layer langevin 50.0 300.0 0.1 45678 zero yes
+run             20000
+unfix           bath
+
+fix             bath temp_layer langevin 300.0 300.0 0.1 45678 zero yes
+run             10000
+unfix           bath
+
+unfix           int_relax
+undump          dump_relax
+reset_timestep  0
+
+write_restart   restart1_Cf_3.equil
+
+# ========================== 10. Indentation setup ==========================
+# Real indentation depth = tip_move_A - tip_gap.
+# v_indent = 1.0 A/ps, timestep = 0.001 ps, indent_steps = 45000
+# tip_move_A = 45 A, real_indent_A = 40 A.
+variable        v_indent       equal 1.0
+variable        indent_steps   equal 80000
+variable        tip_move_A     equal step*dt*${v_indent}
+variable        real_indent_A  equal v_tip_move_A-${tip_gap}
+
+# Release the indenter constraint and control it only by fix move.
+unfix           hold_tip
+
+compute         tipForce diamond reduce sum fx fy fz
+
+# Correct conversion in metal units: 1 eV/A = 1.602176634 nN.
+variable        Fz_tip_nN      equal c_tipForce[3]*1.602176634
+variable        Fpress_nN      equal abs(c_tipForce[3])*1.602176634
+
+fix             int_indent mobile nve
+fix             thermostat temp_layer langevin 300.0 300.0 0.1 24680 zero yes
+fix             move_tip diamond move linear 0.0 0.0 -${v_indent} units box
+
+dump            dump_indent all custom 500 SiC_Cf_3.lmp id type x y z vx vy vz fx fy fz
+dump_modify     dump_indent sort id
+
+fix             print_force all print 100 "${tip_move_A} ${real_indent_A} ${Fz_tip_nN} ${Fpress_nN}" &
+                file fix__force_3.dat screen no &
+                title "# tip_move_A(A) real_indent_A(A) Fz_tip(nN) Fpress_abs(nN)"
+
+# restart.indent is removed as requested.
+thermo          500
+thermo_style    custom step temp pe ke etotal c_tipForce[3] v_Fz_tip_nN v_Fpress_nN v_tip_move_A v_real_indent_A
+
+# ========================== 11. Run indentation ==========================
+run             ${indent_steps}
+
+# ========================== 12. Final output ==========================
+write_data      final_SiC_Cf_3.data
+# write_restart restart2.indent  # removed
+
+undump          dump_indent
+unfix           print_force
+unfix           move_tip
+unfix           thermostat
+unfix           int_indent
+unfix           freeze_fixed
+
+print           "SiC_Cf_3 indentation simulation finished. Tip motion = 45 A, real indentation depth = 40 A."
